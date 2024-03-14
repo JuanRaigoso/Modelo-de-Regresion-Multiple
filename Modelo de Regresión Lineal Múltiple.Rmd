@@ -1,0 +1,949 @@
+---
+title: |
+  <div style="text-align: center;"><strong>Modelo de Regresión Lineal Múltiple</strong></div>
+subtitle: |
+  <div style="text-align: center;"><strong>Ejercicio N°2</strong></div>
+author: |
+  <div style="text-align: center;"><strong>Juan David Raigoso Espinosa</strong></div>
+date: |
+  <div style="text-align: center;"><strong>2024-02-28</strong></div>
+output:
+  html_document:
+    theme: united
+    toc: yes
+    toc_float:
+      collapsed: yes
+---
+
+
+::: text-justify
+
+Maria comenzó como agente de bienes raíces en Cali hace 10 años. Después de laborar dos años para una empresa nacional, se traslado a Bogotá y trabajó para otra agencia de bienes raíces. Sus amigos y familiares la convencieron de que con su experiencia y conocimientos del negocio debía abrir su propia agencia. Terminó por adquirir la licencia de intermediario y al poco tiempo fundó su propia compañía, C&A (Casas y Apartamentos) en Cali. Santiago y Lina, dos vendedores de la empresa anterior aceptaron trabajar en la nueva compaña. En la actualidad ocho agentes de bienes raíces colaboran con ella en C&A.
+
+Actualmente las ventas de bienes raíces en Cali se han visto disminuidas de manera significativa en lo corrido del año. Durante este periodo muchas instituciones bancarias de ahorro y vivienda están prestando grandes sumas de dinero para la industria y la construcción comercial y residencial. Cuando el efecto producto de las tensiones políticas y sociales disminuya, se espera que la actividad económica de este sector se reactive.
+
+Hace dos días, María recibió una carta solicitando asesoría para la compra de dos viviendas por parte de una compañía internacional que desea ubicar a dos de sus empleados con sus familias en la ciudad. Las solicitudes incluyen las siguientes condiciones:
+
+| Características   | Vivienda 1 | Vivienda 2 |
+|-----------|------|-----------|
+| Tipo      | Casa   | Apartamento    |
+| Área construida     | 200   | 300  |
+| parqueaderos    | 1  | 3      |
+| Baños    | 28   | 3      |
+| Habitaciones    | 4   | 5      |
+| Estrato    | 4 o 5   | 5 o 6      |
+| Zona    | Norte   | Sur      |
+
+
+```{r,echo=FALSE}
+suppressWarnings({suppressMessages(
+  library(paqueteMODELOS))
+  suppressMessages(library(tidyverse))
+  suppressMessages(library(mice))
+  suppressMessages(library(naniar))
+  suppressMessages(library(sf))
+  suppressMessages(library(plotly))
+  suppressMessages(library(GGally))
+  suppressMessages(library(ggcorrplot))
+  suppressMessages(library(performance))
+  suppressMessages(library(ggspatial))
+  suppressMessages(library(nortest))
+  suppressMessages(library(car))
+  suppressMessages(library(equatiomatic))
+  suppressMessages(library(leaflet))
+})
+```
+
+# Exploración base de datos
+
+```{r, echo=FALSE}
+data("vivienda")
+str(vivienda)
+```
+
+Se observa que la base de datos tiene 8322 registros y 13 variables dentro de las cuales cuenta con 3 variables cualitativas y 10 cuantitativas, 4 variables tipo texto y 8 variables tipo númericas. dentro de las variables tipo texto se encuentra *piso*, sin embargo, se realiza la transformación a tipo númerico.
+
+A continuación, se hace la descripción de la base de datos:
+
+| Variable| Descripción |
+|-----------|------|
+| Zona | Ubicación de la vivienda : Zona Centro, Zona Norte,…| 
+| Piso | Piso que ocupa la vivienda : primer piso, segundo piso…|
+| Estrato | Estrato socio-económico : 3,4,5,6| 
+| Preciom  | Precio de la vivienda en millones de pesos| 
+| areaconst | Área construida| 
+| Parqueaderos| Número de parqueaderos|
+| Banios  | Número de baños|
+| Habitaciones | Número de habitaciones|
+| Tipo | 	Tipo de vivienda: Casa, Apartamento|
+| Barrio | Barrio de ubicación de la vivienda : 20 de Julio, alamos,..|
+| Longitud | Coordenada geográfica|
+| Latitud| Coordenada geográfica|
+
+```{r,echo=FALSE}
+vivienda$piso<-as.numeric(vivienda$piso)
+str(vivienda)
+```
+
+Se procede a realizar la verificación de la existencia de datos faltantes.
+
+De acuerdo a esto, se observa en el siguiente gráfico la existencia de valores faltantes en el dataset, siendo las variables piso y parqueaderos las que mayor cantidad de datos faltantes presentan.
+
+```{r, echo=FALSE}
+md.pattern(vivienda, rotate.names = TRUE)
+title(main = "Matriz de Datos faltantes", sub = "Valores faltantes en el conjunto de datos")
+```
+
+A continuación, vemos de forma más detallada la distribución de los valores faltantes en el dataset.
+
+```{r,echo=FALSE}
+gg_miss_var(vivienda) + labs(x="Variables", y = "Datos NA")
+```
+
+
+```{r,echo=FALSE}
+vivienda <- vivienda[complete.cases(vivienda$id), ]
+vivienda<-textshape::column_to_rownames(vivienda, loc = 1)
+```
+
+# 1. Base de datos de solo las ofertas de la base1: casas, de la zona norte de la ciudad.
+```{r,echo=FALSE}
+vivienda_casas <- filter(vivienda, tipo == "Casa", zona == "Zona Norte")
+head(vivienda_casas, 3) %>%
+  kable()
+```
+
+```{r,echo=FALSE, fig.width=10, fig.height=8}
+# Leer el shapefile con datos geoespaciales desde un archivo
+datos_shapefile <- st_read("C:/Users/juanr/Downloads/Mapa/mazanascali.shp")
+
+# Convertir los datos de vivienda a un objeto sf con coordenadas especificadas y realizar buffer
+vivienda_casas <- st_as_sf(vivienda_casas, coords = c("longitud", "latitud"), crs = st_crs(datos_shapefile))
+datos_shapefile <- st_as_sf(datos_shapefile)
+# el buffer se realiza para que las variables  (Longitud y Latitud) de ambas bases de datos sean poligonos
+vivienda_casas <- st_buffer(vivienda_casas, dist = 0.01)
+# Realizar una operación de unión espacial entre los datos del shapefile y los datos de vivienda
+datos_combinados <- st_join(datos_shapefile, vivienda_casas)
+
+colores_pasteles <- c("#217937", "#02031a", "#b10c43", "#e84b2c", "#34baab")
+ggplot() +
+  geom_sf(data = datos_combinados, aes(fill = zona), color = "#faf9f4", size = 0.2) +
+  scale_fill_manual(values = colores_pasteles) +  # Asignar la paleta de colores
+  ggtitle("Distribución de casas en la zona Norte") +
+  theme_minimal() +
+  labs(fill = "Zona") +
+  guides(fill = guide_legend(na.value = "transparent")) +
+  theme(legend.key = element_rect(color = "#faf9f4"))+
+  annotation_scale()+
+  annotation_north_arrow(location='tr')
+```
+
+Como se observa no todos los puntos se ubican en la zona correspondiente, esto se debe a:
+
+   - Errores en los datos de latitud y longitud: Es posible que haya errores en la recolección o ingreso de los datos de latitud y longitud. Por ejemplo, si se ingresaron incorrectamente las coordenadas de algunas viviendas, estas podrían aparecer en zonas incorrectas en el mapa.
+
+  - Inconsistencias en la definición de las zonas: Es posible que la definición de las zonas no sea precisa o esté basada en criterios subjetivos. Si no hay una definición clara de los límites de cada zona, es probable que algunas viviendas sean asignadas incorrectamente a una zona.
+
+  - Problemas en la geocodificación: La asignación de las viviendas a una zona específica podría basarse en un proceso de geocodificación automática o manual. Si este proceso no es preciso o si las direcciones no están bien formateadas, las viviendas podrían ser asignadas incorrectamente a una zona.
+  
+# 2. Análisis exploratorio de datos.
+
+A continuación, el análisis está enfocado en la correlación entre la variable respuesta (precio de la casa) en función del área construida, estrato, número de baños, número de habitaciones y zona donde se ubica la vivienda. 
+
+
+## Relación entre el precio y el área construida
+
+Podemos observar que el precio de la vivienda es mucho mayor cuando el área construida es mayor, se puede decir que hay relación lineal directa entre estas dos variables. También, se analiza que hay una gran concentración de casas con área menores a 500 m2 .
+
+```{r, echo=FALSE}
+# Graficar la relación entre el precio y el área construida
+plot_area_construida <- plot_ly(data = vivienda_casas, x = ~areaconst, y = ~preciom, type = "scatter", mode = "markers") %>%
+  add_trace(name = "Precio de la Casa") %>%
+  layout(title = "Relación entre Precio de la Casa y Área Construida",
+         xaxis = list(title = "Área Construida (m²)"),
+         yaxis = list(title = "Precio de la Casa")) %>%
+  hide_legend()
+
+plot_area_construida
+```
+
+## Relación entre el precio y el estrato.
+
+Con relación al estrato, los precios de las casas de estrato 5 y 6 son significativamente mayores a de los estratos 3 y 4. El 75% de las casas de los estratos 5 y 6 tiene precios iguales o menores a 642 y 945 millones de pesos respectivamente, en cambio, para los estratos 3 y 4 es de 530 y 300 millones de pesos respectivamente.
+
+Las casas de estratos 5 representan el 37,53% del total de las casas, seguidamente del estrato 3 con una representación de 32,55%, y los estratos 4 y 6 representan el 22,30% y 7,62% respectivamente. 
+
+
+```{r, echo=FALSE}
+summarytools::freq(vivienda_casas$estrato, plain.ascii = FALSE, style = "rmarkdown")
+```
+
+```{r,echo=FALSE}
+# Definir una paleta de colores pasteles
+colores_pasteles <- c("#fea304", "#909320", "#37192c", "#125a44")
+
+# Convertir la variable estrato en factor
+vivienda_casas$estrato <- factor(vivienda_casas$estrato)
+
+# Crear el gráfico de cajas con ggplot
+p <- ggplot(vivienda_casas, aes(x = estrato, y = preciom, fill = estrato)) +
+  geom_boxplot() +
+  labs(x = "Estrato", y = "Precio de la Vivienda", title = "Relación entre Precio de la Casa y Estrato") +
+  scale_fill_manual(values = colores_pasteles) +  # Asignar la paleta de colores pasteles
+  theme(axis.text.x = element_text(angle = 90))
+
+# Convertir el gráfico a plotly
+plotly::ggplotly(p)
+```
+
+
+## Relación entre el precio y número de baños.
+
+Con relación a la cantidad de baños, los mayores precios de las viviendas se encuentran en casas que contienen entre 4 a 8 baños, los precios de estas viviendas ascienden hasta 1.940 millones de pesos según la cantidad de baños. Las casas con menos baños (0,1,2 o 3) tienden a tener un valor menor.
+
+Por otro lado, el 72.43% de las casas se distribuyen en viviendas que tienen 2,3 y 4 baños.
+
+
+```{r, echo=FALSE}
+summarytools::freq(vivienda_casas$banios, plain.ascii = FALSE, style = "rmarkdown")
+```
+
+```{r,echo=FALSE}
+plot_area_construida <- plot_ly(data = vivienda_casas, x = ~banios, y = ~preciom, type = "scatter", mode = "markers") %>%
+  add_trace(name = "Precio de la Casa") %>%
+  layout(title = "Relación entre Precio de la Casa y baños",
+         xaxis = list(title = "Cantidad de  baños"),
+         yaxis = list(title = "Precio de la Casa")) %>%
+  hide_legend()
+
+plot_area_construida
+```
+
+## Relación entre el precio y número de habitaciones.
+
+De acuerdo con lo anterior, caso similar ocurre con la cantidad de habitaciones, entre más habitaciones cuente una casa mayor va a ser el valor del inmueble. Las casas con 3 o más habitaciones son las más costosas. También, hay una gran concentración de casas que tienen entre 3, 4 o 5 habitaciones, estas representan el  73.41% del total de viviendas, y son casas que pueden llegar a tener valores entre 1.400 a 1.940 millones de pesos.
+
+```{r, echo=FALSE}
+summarytools::freq(vivienda_casas$habitaciones, plain.ascii = FALSE, style = "rmarkdown")
+```
+
+```{r,echo=FALSE}
+plot_area_construida <- plot_ly(data = vivienda_casas, x = ~habitaciones, y = ~preciom, type = "scatter", mode = "markers") %>%
+  add_trace(name = "Precio de la Casa") %>%
+  layout(title = "Relación entre Precio de la Casa y cantidad de habitaciones",
+         xaxis = list(title = "Cantidad de habitaciones"),
+         yaxis = list(title = "Precio de la Casa")) %>%
+  style(marker = list(color = "#02031a")) %>%
+  hide_legend()
+plot_area_construida
+```
+
+## Relación entre el precio y zona.
+
+El 50% de las casas ubicadas en la zona Norte tiene precios iguales o menores a 390 millones de pesos, sin embargo, hay casas que pueden tener precios entre 950 y 1940 millones de pesos. Las casas con menor valor en esta zona cuentan con un precio de 89 millones de pesos.
+
+
+```{r, echo=FALSE}
+summarytools::freq(vivienda_casas$zona, plain.ascii = FALSE, style = "rmarkdown")
+```
+
+```{r,echo=FALSE}
+p<-ggplot(vivienda_casas,aes(x=zona,y=preciom, fill=zona))+
+  geom_boxplot()+
+  labs(x="Zona",y="Precio de la Vivienda",title="Relación entre Precio de la Casa y Zona") + theme(axis.text.x = element_text(angle = 90))
+plotly::ggplotly(p)
+```
+
+## Matriz de Correlación
+
+Cantidad de habitaciones y Estrato (0.11):
+
+La correlación es baja, indicando una relación débil entre la cantidad de habitaciones y el estrato. Esto podría sugerir que el número de habitaciones no varía significativamente con el estrato.
+
+- **Cantidad de habitaciones y Precio (0.32):**
+
+La correlación es moderada, indicando una relación positiva entre la cantidad de habitaciones y el precio. Esto sugiere que, en promedio, las viviendas con más habitaciones tienden a tener precios más altos.
+Cantidad de habitaciones y Área construida (0.38):
+
+La correlación es moderada, indicando una relación positiva entre la cantidad de habitaciones y el área construida. Esto podría interpretarse como que, en general, las viviendas con más habitaciones tienden a tener más espacio construido.
+
+- **Cantidad de habitaciones y Cantidad de baños (0.58):**
+
+La correlación es fuerte, indicando una relación positiva significativa entre la cantidad de habitaciones y la cantidad de baños. Esto sugiere que las viviendas con más habitaciones tienden a tener más baños.
+
+- **Cantidad de baños y Estrato (0.41):**
+
+La correlación es moderada, indicando una relación positiva entre la cantidad de baños y el estrato. Esto podría sugerir que, en promedio, las viviendas con más baños tienden a tener un estrato más alto.
+
+- **Cantidad de baños y Precio (0.52):**
+
+La correlación es moderada, indicando una relación positiva entre la cantidad de baños y el precio. Esto sugiere que las viviendas con más baños tienden a tener precios más altos.
+
+- **Cantidad de baños y Área construida (0.46):**
+
+La correlación es moderada, indicando una relación positiva entre la cantidad de baños y el área construida. Esto podría interpretarse como que las viviendas con más baños tienden a tener más espacio construido.
+
+- **Área construida y Estrato (0.46):**
+
+La correlación es moderada, indicando una relación positiva entre el área construida y el estrato. Esto podría sugerir que las viviendas más grandes tienden a tener un estrato más alto.
+
+- **Área construida y Precio (0.73):**
+
+La correlación es fuerte, indicando una relación positiva significativa entre el área construida y el precio. Esto sugiere que las viviendas más grandes tienden a tener precios más altos.
+
+- **Precio y Estrato (0.61):**
+
+La correlación es fuerte, indicando una relación positiva significativa entre el precio y el estrato. Esto sugiere que las viviendas con precios más altos tienden a tener un estrato más alto.
+
+En general, estas correlaciones proporcionan información valiosa sobre las relaciones entre estas variables. Por ejemplo, la fuerte correlación entre el área construida y el precio indica que el tamaño de la vivienda es un factor clave en la determinación del precio. Además, las correlaciones moderadas entre la cantidad de habitaciones y el precio, así como entre la cantidad de baños y el precio, sugieren que estas características también influyen en el valor de la vivienda.
+
+```{r, echo=FALSE}
+vivienda_2 <- select(vivienda_casas, estrato, preciom, areaconst,banios, habitaciones)
+```
+
+```{r, echo=FALSE}
+# Convertir todas las columnas a numérico
+vivienda_2 <- lapply(vivienda_2, as.numeric)
+
+# Eliminar filas con NA después de la conversión
+vivienda_2 <- na.omit(vivienda_2)
+
+# Crear un nuevo marco de datos
+vivienda_2 <- as.data.frame(vivienda_2)
+
+# Calcular la matriz de correlación
+Casa_cor <- cor(vivienda_2)
+
+# Crear el gráfico de correlación
+ggcorrplot(Casa_cor, type = "upper", lab = TRUE) +
+  labs(title = "Mapa de Correlación - Casa") +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+# 3. Estimación del modelo.
+
+
+A continuación, se llevará a cabo el modelo de regresión múltiple utilizando la siguiente ecuación:
+
+$$
+\operatorname{Precio Casa} = \alpha + \beta_{1}(\operatorname{Área construida}) + \beta_{2}(\operatorname{Estrato}) + \beta_{2}(\operatorname{Número de cuartos})+\beta_{2}(\operatorname{Número de parqueaderos})+\beta_{2}(\operatorname{Número de baños})+\epsilon
+$$
+
+```{r, echo=FALSE}
+Vivienda_casa_21<- filter(vivienda, tipo == "Casa" & zona == "Zona Norte")
+vivienda_3 <- select(Vivienda_casa_21, estrato, preciom, areaconst,banios, habitaciones, parqueaderos)
+mod_multi_1 <- lm(preciom~areaconst+estrato+habitaciones+parqueaderos+banios, data = vivienda_3)
+summary(mod_multi_1)
+```
+
+El coeficiente de determinación múltiple (Multiple R-squared) indica que aproximadamente el 60.41% de la variabilidad en la variable dependiente (precio) puede ser explicada por las variables independientes incluidas en el modelo de regresión múltiple. Esto implica que al menos el 60% de la variabilidad en el precio puede ser atribuida a las variables explicativas (área construida, estrato, número de cuartos, número de parqueaderos, número de baños) consideradas en el modelo.
+
+La interpretacipon de los estimadores del modelo es la siguiente:
+
+```{r, echo = FALSE}
+extract_eq(mod_multi_1, use_coefs = TRUE)
+```
+
+areaconst: Por cada unidad adicional en el área construida de la casa, se espera un aumento estimado de 0.6767 millones de pesos en el precio, manteniendo constantes todas las demás variables.
+
+estrato: Por cada unidad adicional en el estrato de la casa, se espera un aumento estimado de 80 millones de pesos en el precio, manteniendo constantes todas las demás variables.
+
+habitaciones: Por cada unidad adicional en el número de habitaciones de la casa, se espera una disminución estimada de 7 millones de pesos en el precio, manteniendo constantes todas las demás variables.
+
+parqueaderos: Por cada unidad adicional en el número de parqueaderos de la casa, se espera un aumento estimado de 24 millones de pesos en el precio, manteniendo constantes todas las demás variables.
+
+banios: Por cada unidad adicional en el número de baños de la casa, se espera un aumento estimado de 18 millones de pesos en el precio, manteniendo constantes todas las demás variables.
+
+Para mejorar el modelo podríamos implementar:
+
+-	Transformación de Variables.
+
+-	Realizar validación cruzada.
+
+-	Probar técnicas de regularización como la regresión de Ridge o la regresión LASSO. Estas técnicas pueden ayudar a mitigar el sobreajuste y mejorar la generalización del modelo.
+
+-	Considera la posibilidad de aplicar transformaciones a las variables independientes o dependientes. Por ejemplo, puedes probar logaritmos, raíces cuadradas u otras funciones.
+
+- Utilizarr la estrategía stepwise. con el Criterio de información de Akaike.
+
+- Realizar amputación de valores NA.
+
+- Diviridir los datos en entramiento y prueba.
+
+
+# 4. validación de supuestos del modelo
+
+```{r, fig.width=10, fig.height=8, echo= FALSE}
+check_model(mod_multi_1)
+```
+
+EL grafico anterior nos muestra de forma grafica los supuestos de nuestro modelo.
+
+Por el lado de la predicción de l modelo, que, si bien no es un supuesto, no da una imagen de la capacidad predictiva de nuestro modelo, según el grafico el modelo de predicción no se esta juagando tan bien a nuestros datos.
+
+Por el lado de la *linealidad* observamos no todos los valores (residuos) están alrededor de cero y la línea que en teoría debería ser horizontal (color verde) empieza a declinarse hacia valores negativas. Lo cual nos indica que gráficamente nuestros datos no se comportan de forma lineal y no se estaría cumpliendo este supuesto.
+
+Por otra parte, la *Homogeneidad de Varianza*, los residuos deben tener una varianza constante en todos los niveles de las variables independientes. En este caso no es así, ya que los residuos del modelo se encuentran concentrados y no están dispersos uniformemente a lo largo de la línea horizontal.
+
+En relación cono *Observaciones Influyentes* vemos que no hay observaciones que estén influyendo en nuestro modelo, esto se visualiza ya que no hay valores por encima o debajo de las lianas (banda) de color verde.
+
+Al evaluar la *Colinealidad*, no tamos que las variables con mayor VIF es Cantidad de baños, sin embargo, según el criterio para detectar la multicolinealidad de acuerdo a esta medida.
+
+•	Si VIFj ≤5 VIF no hay problemas de multicolinealidad.
+
+•	Si 5<VIFj≤10 hay problemas de multicolinealidad moderada.
+
+•	Si VIFj>10 hay problemas de multicolinealidad graves.
+
+En este caso todas las variables tienen un VIF < 5, por lo tanto no hay problemas de Colinealidad.
+
+Por último, en relación con la *Normalidad de los Residuos* encontramos que estos no se distribuyen normalmente alrededor de la línea cero, el grafico de residuos muestra una distribución asimétrica alrededor de cero, no cumple este supuesto.
+
+- Prueba de normalidad en los residuales
+
+```{r,echo=FALSE}
+ad.test(mod_multi_1$residuals)
+```
+
+La prueba de Anderson-Darling evalúa si los residuales siguen una distribución normal. En este caso, el valor estadístico A es 13.227 y el p-valor es menor que 2.2e-16, lo que indica evidencia significativa en contra de la normalidad. En otras palabras, los residuos no siguen una distribución normal.
+
+- Prueba de homocedasticidad.
+
+```{r,echo=FALSE}
+lmtest::bptest(mod_multi_1)
+```
+
+La prueba Breusch-Pagan para la homocedasticidad evalúa si la varianza de los residuales es constante en todos los niveles de las variables predictoras. En este caso, el valor de prueba BP es 80.281 con 5 grados de libertad y un p-valor menor que 7.33e-16. Esto sugiere evidencia significativa en contra de la homocedasticidad, lo que indica que la varianza de los residuos no es constante.
+
+- Análisis de Inflación de Varianza (VIF):
+
+```{r,echo=FALSE}
+vif(mod_multi_1)
+```
+
+El Análisis de Inflación de Varianza (VIF) evalúa la multicolinealidad entre las variables predictoras. Los valores del VIF cercanos a 1 indican baja multicolinealidad. En este caso, los valores del VIF son razonablemente bajos, lo que sugiere que la multicolinealidad no es un problema significativo.
+
+- Prueba de no autocorrelación de errores.
+```{r,echo=FALSE}
+lmtest::dwtest(mod_multi_1)
+```
+
+La prueba de Durbin-Watson evalúa si hay autocorrelación de primer orden en los residuales.El p-value asociado al estadístico DW es 0.005472. Este p-value es comparado con un nivel de significancia (como 0.05) para determinar si hay evidencia estadística suficiente para rechazar la hipótesis nula. En este caso, el p-value es menor que 0.05, lo que sugiere evidencia significativa contra la hipótesis nula de ausencia de autocorrelación. Por lo tanto, se podría concluir que hay evidencia de autocorrelación positiva en los residuos.
+
+- Los residuales no siguen una distribución normal según la prueba de Anderson-Darling.
+
+- Existe heterocedasticidad en los residuales según la prueba Breusch-Pagan, no hya homocedasticidad.
+
+- La multicolinealidad entre las variables predictoras no parece ser un problema significativo según el análisis de VIF.
+
+- Hay evidencia de autocorrelación positiva de primer orden en los residuales según la prueba de Durbin-Watson.
+
+
+# 5. Modelo con las características de la primera solicitud.
+
+Recordemos las caracteristicas de la solicitud:
+
+| Variable| Descripción |
+|-----------|------|
+| Tipo  | Casa|
+| Área construida | 200 |
+| Cantidad de parqueaderos  | 1 |
+| Cantidad de baños  | 2 |
+| Cantidad de habitaciones  | 4 |
+| Estrato  | 4 o 5|
+| Zona  | Norte |
+| Crédito preaprobado  | 350 Millones|
+
+
+```{r, echo=FALSE}
+# Crear un nuevo conjunto de datos con las características de la primera solicitud
+nueva_solicitud <- data.frame(
+  areaconst = 200,
+  parqueaderos = 1,
+  banios = 2,
+  habitaciones = 4,
+  estrato = 4  # Se elige aleatoriamente entre 4 y 5
+)
+
+nueva_solicitud_1 <- data.frame(
+  areaconst = 200,
+  parqueaderos = 1,
+  banios = 2,
+  habitaciones = 4,
+  estrato = 5# Se elige aleatoriamente entre 4 y 5
+)
+# Realizar la predicción con el modelo identificado
+prediccion_precio <- predict(mod_multi_1, newdata = nueva_solicitud)
+prediccion_precio_1 <- predict(mod_multi_1, newdata = nueva_solicitud_1)
+# Imprimir la predicción
+cat("El precio de una vivienda con estas características pero con estrato 4 en la zona Zorte es de:", prediccion_precio, "\n")
+cat("El precio de una vivienda con estas características pero con estrato 5 en la zona Zorte es de:", prediccion_precio_1, "\n")
+```
+
+# 6. Potenciales ofertas.
+
+Con las predicciones del modelo sugiera potenciales ofertas que responda a la solicitud de la vivienda 1. Teniendo en cuenta que la empresa tiene crédito pre-aprobado de máximo 350.
+
+Al realizar la verificación en la base de datos, se optiene que las potenciales ofertas son:
+
+
+```{r, echo=FALSE}
+ofertas_potenciales_estrat4 <- filter(vivienda,
+                              estrato %in% c(4, 5),
+                              areaconst >= 200,
+                              parqueaderos >= 1,
+                              banios >= 2,
+                              habitaciones == 4,
+                              zona == 'Zona Norte',
+                              tipo =='Casa',
+                              preciom <= 350)
+head(ofertas_potenciales_estrat4, 5 )%>%
+  kable()
+```
+
+
+ - Mapa potenciales ofertas:
+
+```{r,echo=FALSE, fig.width=8, fig.height=5}
+# Crear mapa con marcadores de casas
+map <- leaflet() %>%
+  addTiles() %>% 
+  addMarkers(
+    data = ofertas_potenciales_estrat4,
+    lng = ~longitud,
+    lat = ~latitud,
+    icon = leaflet::makeIcon(iconUrl = "https://images.vexels.com/media/users/3/142690/isolated/preview/42d5c05736bc309247375267ec45aa22-logotipo-de-lupa-inmobiliaria.png", iconWidth = 38, iconHeight = 38), # Icono de casa roja
+    popup = paste("Precio: $", ofertas_potenciales_estrat4$preciom,"<br>",
+                  "Área Construida: ", ofertas_potenciales_estrat4$areaconst,"m²","<br>",
+                  "Estrato: ", ofertas_potenciales_estrat4$estrato,"<br>",
+                  "Cantidad de baños: ", ofertas_potenciales_estrat4$banios,"<br>",
+                  "Cantidad de habitaciones: ", ofertas_potenciales_estrat4$habitaciones,"<br>",
+                  "Cantidad de Parqueaderos: ", ofertas_potenciales_estrat4$parqueaderos
+                  )
+  )
+
+# Visualizar el mapa
+map
+```
+
+
+# 7. Base de datos de solo las ofertas de la base2: Apartamentos, de la zona norte de la Sur..
+
+Ahora se realice los pasos del 1 al 6. Para la segunda solicitud que tiene un crédito pre-aprobado por valor de $850 millones.
+
+## 1. Base de datos de solo las ofertas de la base2: apartamentos, de la zona sur de la ciudad.
+
+```{r, echo=FALSE}
+vivienda_apartamentos <- filter(vivienda, tipo == "Apartamento", zona == "Zona Sur")
+head(vivienda_apartamentos, 3) %>%
+  kable()
+```
+
+
+```{r,echo=FALSE, fig.width=10, fig.height=8}
+# Leer el shapefile con datos geoespaciales desde un archivo
+datos_shapefile <- st_read("C:/Users/juanr/Downloads/Mapa/mazanascali.shp")
+
+# Convertir los datos de vivienda a un objeto sf con coordenadas especificadas y realizar buffer
+vivienda_apartamentos <- st_as_sf(vivienda_apartamentos, coords = c("longitud", "latitud"), crs = st_crs(datos_shapefile))
+datos_shapefile <- st_as_sf(datos_shapefile)
+# el buffer se realiza para que las variables  (Longitud y Latitud) de ambas bases de datos sean poligonos
+vivienda_apartamentos <- st_buffer(vivienda_apartamentos, dist = 0.01)
+# Realizar una operación de unión espacial entre los datos del shapefile y los datos de vivienda
+datos_combinados <- st_join(datos_shapefile, vivienda_apartamentos)
+
+colores_pasteles <- c("#e84b2c","#217937", "#02031a", "#b10c43", "#34baab")
+ggplot() +
+  geom_sf(data = datos_combinados, aes(fill = zona), color = "#faf9f4", size = 0.2) +
+  scale_fill_manual(values = colores_pasteles) +  # Asignar la paleta de colores
+  ggtitle("Distribución de Apratamentos en la Zona Sur") +
+  theme_minimal() +
+  labs(fill = "Zona") +
+  guides(fill = guide_legend(na.value = "transparent")) +
+  theme(legend.key = element_rect(color = "#faf9f4"))+
+  annotation_scale()+
+  annotation_north_arrow(location='tr')
+```
+
+
+Como se observa no todos los puntos se ubican en la zona correspondiente, esto se debe a:
+
+   - Errores en los datos de latitud y longitud: Es posible que haya errores en la recolección o ingreso de los datos de latitud y longitud. Por ejemplo, si se ingresaron incorrectamente las coordenadas de algunas viviendas, estas podrían aparecer en zonas incorrectas en el mapa.
+
+  - Inconsistencias en la definición de las zonas: Es posible que la definición de las zonas no sea precisa o esté basada en criterios subjetivos. Si no hay una definición clara de los límites de cada zona, es probable que algunas viviendas sean asignadas incorrectamente a una zona.
+
+  - Problemas en la geocodificación: La asignación de las viviendas a una zona específica podría basarse en un proceso de geocodificación automática o manual. Si este proceso no es preciso o si las direcciones no están bien formateadas, las viviendas podrían ser asignadas incorrectamente a una zona.
+  
+## 2. Análisis exploratorio de datos.
+
+A continuación, el análisis está enfocado en la correlación entre la variable respuesta (precio de la casa) en función del área construida, estrato, número de baños, número de habitaciones y zona donde se ubica la vivienda. 
+
+
+### Relación entre el precio y el área construida
+
+Podemos observar que el precio de la vivienda es mucho mayor cuando el área construida es mayor, se puede decir que hay relación lineal directa entre estas dos variables. También, se analiza que hay una gran concentración de casas con área menores a 500 m2 .
+
+```{r, echo=FALSE}
+# Graficar la relación entre el precio y el área construida
+plot_area_construida <- plot_ly(data = vivienda_apartamentos, x = ~areaconst, y = ~preciom, type = "scatter", mode = "markers") %>%
+  add_trace(name = "Precio de la Casa") %>%
+  layout(title = "Relación entre Precio del Apartamento y Área Construida",
+         xaxis = list(title = "Área Construida (m²)"),
+         yaxis = list(title = "Precio  Apartamentos")) %>%
+  hide_legend()
+
+plot_area_construida
+```
+
+### Relación entre el precio y el estrato.
+
+Con relación al estrato, los precios de los apartamentos del estrato 6 son significativamente mayores que los demás estratos, el 75% de los apartamentos en este estrato tienen un premio igual o menor a 700 millones de pesos, sin embargo, hay apartamentos que pueden llegar a valer 1.750 millones de pesos.
+
+Los apartamentos de estrato 3, 4 y 5 tiene precios más bajos que los de estrato 6, pues el 50% de los apartamentos en el estrato 3 tiene precios iguales o menores a 148 millones, en el estrato 4 de 240 millones y en el estrato 5 de 330 millones de pesos.
+
+Por otro lado, hay una concentración del 76.21% de los apartamentos en los estratos 4 y 5.
+
+```{r, echo=FALSE}
+summarytools::freq(vivienda_apartamentos$estrato, plain.ascii = FALSE, style = "rmarkdown")
+```
+
+```{r,echo=FALSE}
+# Definir una paleta de colores pasteles
+colores_pasteles <- c("#fea304", "#909320", "#37192c", "#125a44")
+
+# Convertir la variable estrato en factor
+vivienda_apartamentos$estrato <- factor(vivienda_apartamentos$estrato)
+
+# Crear el gráfico de cajas con ggplot
+p <- ggplot(vivienda_apartamentos, aes(x = estrato, y = preciom, fill = estrato)) +
+  geom_boxplot() +
+  labs(x = "Estrato", y = "Precio de la Vivienda", title = "Relación entre Precio de Apartamentos y Estrato") +
+  scale_fill_manual(values = colores_pasteles) +  # Asignar la paleta de colores pasteles
+  theme(axis.text.x = element_text(angle = 90))
+
+# Convertir el gráfico a plotly
+plotly::ggplotly(p)
+```
+
+
+### Relación entre el precio y número de baños.
+
+Los apartamentos que cuentan con 3 hasta 6 baños son los más costosos, aquellos que tiene 3 baños pueden llegar a tener un precio de 1.200 millones;4 y 5 baños un precio de 1.750 millones de pesos, y con 6 baños un precio de 1600 millones de pesos.
+
+Por otro lado, hay una concentración del 80.73% de los apartamentos con 2 y 3 baños.
+
+
+```{r, echo=FALSE}
+summarytools::freq(vivienda_apartamentos$banios, plain.ascii = FALSE, style = "rmarkdown")
+```
+
+```{r,echo=FALSE}
+plot_area_construida <- plot_ly(data = vivienda_apartamentos, x = ~banios, y = ~preciom, type = "scatter", mode = "markers") %>%
+  add_trace(name = "Precio de la Casa") %>%
+  layout(title = "Relación entre Precio de los apartamentos y baños",
+         xaxis = list(title = "Cantidad de  baños"),
+         yaxis = list(title = "Precio del Apartamento")) %>%
+  hide_legend()
+
+plot_area_construida
+```
+
+
+### Relación entre el precio y número de habitaciones.
+
+Los apartamentos con 3 y 4 habitaciones son los más costoso, ya que en ambos casos se registran precios de 1.750 millones de pesos, en relación con aquellos apartamentos de 1 y 2 habitaciones done pueden llegar a tener un precio de 320 y 840 millones de pesos.
+
+Por otro lado, se encuentra mayor oferta de apartamentos en aquellos que tienen 3 habitaciones, con una representación del 68.25%
+
+
+```{r, echo=FALSE}
+summarytools::freq(vivienda_apartamentos$habitaciones, plain.ascii = FALSE, style = "rmarkdown")
+```
+
+```{r,echo=FALSE}
+plot_area_construida <- plot_ly(data = vivienda_apartamentos, x = ~habitaciones, y = ~preciom, type = "scatter", mode = "markers") %>%
+  add_trace(name = "Precio del Apartamento") %>%
+  layout(title = "Relación entre Precio del Apartamento y cantidad de habitaciones",
+         xaxis = list(title = "Cantidad de habitaciones"),
+         yaxis = list(title = "Precio del Apartamento")) %>%
+  style(marker = list(color = "#02031a")) %>%
+  hide_legend()
+plot_area_construida
+```
+
+### Relación entre el precio y zona.
+
+El 75% de los apartamentos ubicados en la zona sur tienen precios iguales o menores a 335 millones de pesos, sin embargo, hay apartamentos que pueden tener precios entre 575 y 1.750 millones de pesos. Los apartamentos con menor valor en esta zona cuentan con un precio de 75 millones de pesos.
+
+```{r, echo=FALSE}
+summarytools::freq(vivienda_apartamentos$zona, plain.ascii = FALSE, style = "rmarkdown")
+```
+
+```{r,echo=FALSE}
+p<-ggplot(vivienda_apartamentos,aes(x=zona,y=preciom, fill=zona))+
+  geom_boxplot()+
+  labs(x="Zona",y="Precio del Apartamento",title="Relación entre Precio del Apartamento y Zona") + theme(axis.text.x = element_text(angle = 90))
+plotly::ggplotly(p)
+```
+
+### Matriz de Correlación
+
+-	**Precio y Área Construida (0.76):**
+
+Interpretación: Existe una correlación positiva fuerte (0.76) entre el precio de la vivienda y el área construida. Esto sugiere que, en general, a medida que el área construida aumenta, el precio tiende a aumentar.
+
+-	**Cantidad de Baños y Precio (0.72):**
+
+Interpretación: Existe una correlación positiva bastante fuerte (0.72) entre la cantidad de baños y el precio de la vivienda. Esto indica que las viviendas con más baños tienden a tener precios más altos.
+
+-	**Área Construida y Estrato (0.48):**
+
+Interpretación: Hay una correlación positiva moderada (0.48) entre el área construida y el estrato. Esto sugiere que las viviendas con un área construida más grande tienden a estar en estratos más altos.
+
+-	**Cantidad de Habitaciones y Cantidad de Baños (0.51):**
+
+Interpretación: Existe una correlación moderada (0.51) entre la cantidad de habitaciones y la cantidad de baños. Esto indica que las viviendas con más habitaciones también tienden a tener más baños.
+
+-	**Precio y Estrato (0.67):**
+
+Interpretación: Hay una correlación positiva fuerte (0.67) entre el precio de la vivienda y el estrato. Esto sugiere que las viviendas en estratos más altos tienden a tener precios más altos.
+
+Es importante recordar que la correlación no implica causalidad, y otros factores pueden influir en estas relaciones. Estas interpretaciones se basan en la fuerza y dirección de las asociaciones lineales observadas.
+
+```{r, echo=FALSE}
+Apartamento_2 <- select(vivienda_apartamentos, estrato, preciom, areaconst, banios, habitaciones)
+```
+
+```{r, echo=FALSE}
+# Convertir todas las columnas a numérico
+Apartamento_2 <- lapply(Apartamento_2, as.numeric)
+
+# Eliminar filas con NA después de la conversión
+Apartamento_2 <- na.omit(Apartamento_2)
+
+# Crear un nuevo marco de datos
+Apartamento_2 <- as.data.frame(Apartamento_2)
+
+# Calcular la matriz de correlación
+Aparatmento <- cor(Apartamento_2)
+
+# Crear el gráfico de correlación
+ggcorrplot(Aparatmento, type = "upper", lab = TRUE) +
+  labs(title = "Mapa de Correlación - Apartamento") +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+## 3. Estimación del modelo.
+
+A continuación, se llevará a cabo el modelo de regresión múltiple utilizando la siguiente ecuación:
+
+
+$$
+\operatorname{Precio Apartamento} = \alpha + \beta_{1}(\operatorname{Área construidal}) + \beta_{2}(\operatorname{Estrato}) + \beta_{2}(\operatorname{Número de cuartos})+\beta_{2}(\operatorname{Número de parqueaderos})+\beta_{2}(\operatorname{Número de baños}) + \epsilon
+$$
+
+```{r, echo= FALSE}
+Vivienda_aparta_21<- filter(vivienda, tipo == "Apartamento" & zona == "Zona Sur")
+Vivienda_aparta_21 <- select(Vivienda_aparta_21, estrato, preciom, areaconst,banios, habitaciones, parqueaderos)
+mod_multi_1_aparta <- lm(preciom~areaconst+estrato+habitaciones+parqueaderos+banios, data = Vivienda_aparta_21)
+summary(mod_multi_1_aparta)
+```
+
+El coeficiente de determinación múltiple (Multiple R-squared) indica que aproximadamente el 78.72% de la variabilidad en la variable dependiente (precio) puede ser explicada por las variables independientes incluidas en el modelo de regresión múltiple. Esto implica que al menos el 78% de la variabilidad en el precio puede ser atribuida a las variables explicativas (área construida, estrato, número de cuartos, número de parqueaderos, número de baños) consideradas en el modelo.
+
+La interpretacipon de los estimadores del modelo es la siguiente:
+
+```{r, echo= FALSE}
+extract_eq(mod_multi_1_aparta, use_coefs = TRUE)
+```
+
+areaconst: Por cada unidad adicional en el área construida de la casa, se espera un aumento estimado de 1.28 millones de pesos en el precio, manteniendo constantes todas las demás variables.
+
+estrato: Por cada unidad adicional en el estrato de la casa, se espera un aumento estimado de 60 millones de pesos en el precio, manteniendo constantes todas las demás variables.
+
+habitaciones: Por cada unidad adicional en el número de habitaciones de la casa, se espera una disminución estimada de 24 millones de pesos en el precio, manteniendo constantes todas las demás variables.
+
+parqueaderos: Por cada unidad adicional en el número de parqueaderos de la casa, se espera un aumento estimado de 72 millones de pesos en el precio, manteniendo constantes todas las demás variables.
+
+banios: Por cada unidad adicional en el número de baños de la casa, se espera un aumento estimado de 50 millones de pesos en el precio, manteniendo constantes todas las demás variables.
+
+Para mejorar el modelo podríamos implementar:
+
+-	Transformación de Variables.
+
+-	Realizar validación cruzada.
+
+-	Probar técnicas de regularización como la regresión de Ridge o la regresión LASSO. Estas técnicas pueden ayudar a mitigar el sobreajuste y mejorar la generalización del modelo.
+
+-	Considera la posibilidad de aplicar transformaciones a las variables independientes o dependientes. Por ejemplo, puedes probar logaritmos, raíces cuadradas u otras funciones.
+
+- Utilizarr la estrategía stepwise. con el Criterio de información de Akaike.
+
+- Realizar amputación de valores NA.
+
+
+## 4. Validación de los supuestos.
+
+```{r, fig.width=10, fig.height=8, echo= FALSE}
+check_model(mod_multi_1_aparta)
+```
+
+
+EL grafico anterior nos muestra de forma grafica los supuestos de nuestro modelo.
+
+Por el lado de la predicción de l modelo, que, si bien no es un supuesto, no da una imagen de la capacidad predictiva de nuestro modelo, según el grafico el modelo de predicción no se esta juagando tan bien a nuestros datos.
+
+Por el lado de la *linealidad* observamos no todos los valores (residuos) están alrededor de cero y la línea que en teoría debería ser horizontal (color verde) empieza a declinarse hacia valores negativas. Lo cual nos indica que gráficamente nuestros datos no se comportan de forma lineal y no se estaría cumpliendo este supuesto.
+
+Por otra parte, la *Homogeneidad de Varianza*, los residuos deben tener una varianza constante en todos los niveles de las variables independientes. En este caso no es así, ya que los residuos del modelo se encuentran concentrados y no están dispersos uniformemente a lo largo de la línea horizontal.
+
+En relación cono *Observaciones Influyentes* vemos que no hay observaciones que estén influyendo en nuestro modelo, esto se visualiza ya que no hay valores por encima o debajo de las lianas (banda) de color verde.
+
+Al evaluar la *Colinealidad*, no tamos que las variables con mayor VIF es Cantidad de baños, sin embargo, según el criterio para detectar la multicolinealidad de acuerdo a esta medida.
+
+•	Si VIFj ≤5 VIF no hay problemas de multicolinealidad.
+
+•	Si 5<VIFj≤10 hay problemas de multicolinealidad moderada.
+
+•	Si VIFj>10 hay problemas de multicolinealidad graves.
+
+En este caso todas las variables tienen un VIF < 5, por lo tanto no hay problemas de Colinealidad.
+
+Por último, en relación con la *Normalidad de los Residuos* encontramos que estos no se distribuyen normalmente alrededor de la línea cero, el grafico de residuos muestra una distribución asimétrica alrededor de cero, no cumple este supuesto.
+
+
+
+- Prueba de normalidad en los residuales
+
+```{r,echo=FALSE}
+ad.test(mod_multi_1_aparta$residuals)
+```
+
+La prueba de Anderson-Darling evalúa si los residuales siguen una distribución normal. En este caso, el valor estadístico A es 72.413 y el p-valor es menor que 2.2e-16, lo que indica evidencia significativa en contra de la normalidad. En otras palabras, los residuos no siguen una distribución normal.
+
+- Prueba de homocedasticidad.
+
+```{r,echo=FALSE}
+lmtest::bptest(mod_multi_1_aparta)
+```
+
+La prueba Breusch-Pagan para la homocedasticidad evalúa si la varianza de los residuales es constante en todos los niveles de las variables predictoras. En este caso, el valor de prueba BP es 754.81 con 5 grados de libertad y un p-valor menor que 2.2e-16. Esto sugiere evidencia significativa en contra de la homocedasticidad, lo que indica que la varianza de los residuos no es constante.
+
+- Análisis de Inflación de Varianza (VIF):
+
+```{r,echo=FALSE}
+vif(mod_multi_1_aparta)
+```
+
+El Análisis de Inflación de Varianza (VIF) evalúa la multicolinealidad entre las variables predictoras. Los valores del VIF cercanos a 1 indican baja multicolinealidad. En este caso, los valores del VIF son razonablemente bajos, lo que sugiere que la multicolinealidad no es un problema significativo.
+
+- Prueba de no autocorrelación de errores.
+```{r,echo=FALSE}
+lmtest::dwtest(mod_multi_1_aparta)
+```
+
+La prueba de Durbin-Watson evalúa si hay autocorrelación de primer orden en los residuales.El p-value asociado al estadístico DW es 1.5333. Este p-value es comparado con un nivel de significancia (como 0.05) para determinar si hay evidencia estadística suficiente para rechazar la hipótesis nula. En este caso, el p-value es menor (2.2e-16) que 0.05 , lo que sugiere evidencia significativa contra la hipótesis nula de ausencia de autocorrelación. Por lo tanto, se podría concluir que hay evidencia de autocorrelación positiva en los residuos.
+
+- Los residuales no siguen una distribución normal según la prueba de Anderson-Darling.
+
+- Existe heterocedasticidad en los residuales según la prueba Breusch-Pagan, no hya homocedasticidad.
+
+- La multicolinealidad entre las variables predictoras no parece ser un problema significativo según el análisis de VIF.
+
+- Hay evidencia de autocorrelación positiva de primer orden en los residuales según la prueba de Durbin-Watson.
+
+
+## 5. Modelo con las características de la segunda solicitud.
+
+Recordemos las caracteristicas de la solicitud:
+
+| Variable| Descripción |
+|-----------|------|
+| Tipo  | Apartamento |
+| Área construida | 300 |
+| Cantidad de parqueaderos  | 3 |
+| Cantidad de baños  | 3 |
+| Cantidad de habitaciones  | 5 |
+| Estrato  | 5 o 6|
+| Zona  | Sur |
+| Crédito preaprobado  | 850 Millones|
+
+
+```{r, echo=FALSE}
+# Crear un nuevo conjunto de datos con las características de la primera solicitud
+nueva_solicitud_aparta <- data.frame(
+  areaconst = 300,
+  parqueaderos = 3,
+  banios = 3,
+  habitaciones = 5,
+  estrato = 5
+)
+
+
+nueva_solicitud_1_aparta <- data.frame(
+  areaconst = 300,
+  parqueaderos = 3,
+  banios = 3,
+  habitaciones = 5,
+  estrato = 6
+)
+# Realizar la predicción con el modelo identificado
+prediccion_precio_aparta <- predict(mod_multi_1, newdata = nueva_solicitud_aparta)
+prediccion_precio_1_aparta <- predict(mod_multi_1, newdata = nueva_solicitud_1_aparta)
+# Imprimir la predicción
+cat("El precio de un apartamento con estas características pero con estrato 5 en la zona Sur es de:", prediccion_precio_aparta, "\n")
+cat("El precio de un apartamento con estas características pero con estrato 6 en la zona Sur es de:", prediccion_precio_1_aparta, "\n")
+```
+
+## 6. Potenciales ofertas.
+
+Con las predicciones del modelo sugiera potenciales ofertas que responda a la solicitud de la vivienda 2. Teniendo en cuenta que la empresa tiene crédito pre-aprobado de máximo 850.
+
+```{r, echo=FALSE}
+Apartamento_potenciales_5 <- filter(vivienda,
+                              estrato %in% c(5, 6),
+                              areaconst >= 300,
+                              parqueaderos >= 3,
+                              banios >= 3,
+                              habitaciones >= 5,
+                              zona == 'Zona Sur',
+                              tipo =='Apartamento',
+                              preciom <= 850)
+head(Apartamento_potenciales_5, 3)%>%
+  kable()
+```
+
+
+ - Mapa potenciales ofertas:
+
+
+
+
+```{r,echo=FALSE, fig.width=8, fig.height=5}
+map <- leaflet() %>%
+  addTiles() %>% 
+  addMarkers(
+    data = Apartamento_potenciales_5,
+    lng = ~longitud,
+    lat = ~latitud,
+    icon = leaflet::makeIcon(iconUrl = "https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcTTBmOOSJSKXNNJi99I_lLTGqlEJpYr2y2Plg", iconWidth = 38, iconHeight = 60), # Icono de casa roja
+    popup = paste("Precio: $", Apartamento_potenciales_5$preciom, "<br>",
+                  "Cantidad de baños:", Apartamento_potenciales_5$banios, "<br>",
+                  "Cantidad de habitaciones", Apartamento_potenciales_5$habitaciones,"<br>",
+                  "Área Construida m²", Apartamento_potenciales_5$areaconst,"<br>",
+                  "Estrato", Apartamento_potenciales_5$estrato,"<br>",
+                  "Cantidad de Parqueaderos", Apartamento_potenciales_5$parqueaderos
+                  )
+  )
+
+# Visualizar el mapa
+map
+```
+
+
+
+**El código utilizado se encuentra disponible en el repositorio de GITHUB:**
+
+https://github.com/JuanRaigoso/Modelo-de-Regresion-Multiple/blob/main/Modelo%20de%20Regresion%20Lineal.R
+
+:::
